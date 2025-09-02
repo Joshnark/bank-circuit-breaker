@@ -1,0 +1,13 @@
+{
+  "name": "circuit-breaker-controller",
+  "version": "1.0.0",
+  "description": "Circuit breaker controller lambda function",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.1495.0"
+  },
+  "devDependencies": {}
+}

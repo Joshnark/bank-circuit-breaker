@@ -1,0 +1,341 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Sistema Bancario Resiliente con Circuit Breaker - 4 Lambda Functions, DynamoDB y CloudWatch'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    Description: Environment name (dev, staging, prod)
+    
+Resources:
+  # DynamoDB Table para estado del sistema
+  CircuitBreakerStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-circuit-breaker-state'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: systemId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: systemId
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  # IAM Role para Lambda Functions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-lambda-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BankingSystemPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt CircuitBreakerStateTable.Arn
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:ListMetrics
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-*'
+
+  # Lambda Function 1 - Full Service (Nivel 1)
+  FullServiceFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-full-service'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code: full-service/
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          STATE_TABLE: !Ref CircuitBreakerStateTable
+          LOG_LEVEL: INFO
+
+  # Lambda Function 2 - Degraded Service (Nivel 2)
+  DegradedServiceFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-degraded-service'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code: degraded-service/
+      Timeout: 15
+      MemorySize: 128
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          STATE_TABLE: !Ref CircuitBreakerStateTable
+          LOG_LEVEL: INFO
+
+  # Lambda Function 3 - Maintenance Service (Nivel 3)
+  MaintenanceServiceFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-maintenance-service'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code: maintenance-service/
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          STATE_TABLE: !Ref CircuitBreakerStateTable
+          LOG_LEVEL: INFO
+
+  # Lambda Function 4 - Circuit Breaker Controller
+  CircuitBreakerControllerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-circuit-breaker-controller'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code: circuit-breaker-controller/
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          STATE_TABLE: !Ref CircuitBreakerStateTable
+          FULL_SERVICE_FUNCTION: !Ref FullServiceFunction
+          DEGRADED_SERVICE_FUNCTION: !Ref DegradedServiceFunction
+          MAINTENANCE_SERVICE_FUNCTION: !Ref MaintenanceServiceFunction
+          LOG_LEVEL: INFO
+
+  # API Gateway REST API
+  BankingSystemApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${AWS::StackName}-banking-api'
+      Description: 'Banking System API con Circuit Breaker'
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: execute-api:Invoke
+            Resource: '*'
+
+  # API Gateway Resources
+  AccountResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref BankingSystemApiGateway
+      ParentId: !GetAtt BankingSystemApiGateway.RootResourceId
+      PathPart: account
+
+  AccountIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref BankingSystemApiGateway
+      ParentId: !Ref AccountResource
+      PathPart: '{accountId}'
+
+  StatusResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref BankingSystemApiGateway
+      ParentId: !GetAtt BankingSystemApiGateway.RootResourceId
+      PathPart: status
+
+  # API Gateway Methods - Account Endpoint (enruta via Controller)
+  AccountMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref BankingSystemApiGateway
+      ResourceId: !Ref AccountIdResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CircuitBreakerControllerFunction.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: Empty
+        - StatusCode: 503
+          ResponseModels:
+            application/json: Empty
+        - StatusCode: 500
+          ResponseModels:
+            application/json: Empty
+
+  # API Gateway Methods - Status Endpoint (directo al Controller)
+  StatusMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref BankingSystemApiGateway
+      ResourceId: !Ref StatusResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CircuitBreakerControllerFunction.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: Empty
+
+  # Lambda Permissions para API Gateway
+  ControllerApiGatewayPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CircuitBreakerControllerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${BankingSystemApiGateway}/*/*'
+
+  # API Gateway Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - AccountMethod
+      - StatusMethod
+    Properties:
+      RestApiId: !Ref BankingSystemApiGateway
+      StageName: !Ref Environment
+      StageDescription: !Sub 'Deployment for ${Environment} environment'
+
+  # CloudWatch Log Groups
+  FullServiceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${FullServiceFunction}'
+      RetentionInDays: 14
+
+  DegradedServiceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${DegradedServiceFunction}'
+      RetentionInDays: 14
+
+  MaintenanceServiceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${MaintenanceServiceFunction}'
+      RetentionInDays: 14
+
+  ControllerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${CircuitBreakerControllerFunction}'
+      RetentionInDays: 30
+
+  # CloudWatch Alarms para monitoreo automático
+  HighErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-high-error-rate'
+      AlarmDescription: 'Alarm when error rate is high'
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref FullServiceFunction
+      AlarmActions:
+        - !Ref CircuitBreakerTopic
+
+  # SNS Topic para notificaciones (opcional)
+  CircuitBreakerTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-circuit-breaker-notifications'
+      DisplayName: 'Circuit Breaker Notifications'
+
+Outputs:
+  ApiGatewayUrl:
+    Description: 'URL base del API Gateway'
+    Value: !Sub 'https://${BankingSystemApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${AWS::StackName}-api-url'
+
+  AccountEndpoint:
+    Description: 'Endpoint para consultar cuentas'
+    Value: !Sub 'https://${BankingSystemApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/account/{accountId}'
+    Export:
+      Name: !Sub '${AWS::StackName}-account-endpoint'
+
+  StatusEndpoint:
+    Description: 'Endpoint para consultar estado del sistema'
+    Value: !Sub 'https://${BankingSystemApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/status'
+    Export:
+      Name: !Sub '${AWS::StackName}-status-endpoint'
+
+  DynamoDBTableName:
+    Description: 'Nombre de la tabla DynamoDB'
+    Value: !Ref CircuitBreakerStateTable
+    Export:
+      Name: !Sub '${AWS::StackName}-dynamodb-table'
+
+  FullServiceFunctionArn:
+    Description: 'ARN de la función Full Service (Nivel 1)'
+    Value: !GetAtt FullServiceFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-full-service-arn'
+
+  DegradedServiceFunctionArn:
+    Description: 'ARN de la función Degraded Service (Nivel 2)'
+    Value: !GetAtt DegradedServiceFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-degraded-service-arn'
+
+  MaintenanceServiceFunctionArn:
+    Description: 'ARN de la función Maintenance Service (Nivel 3)'
+    Value: !GetAtt MaintenanceServiceFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-maintenance-service-arn'
+
+  CircuitBreakerControllerArn:
+    Description: 'ARN de la función Circuit Breaker Controller'
+    Value: !GetAtt CircuitBreakerControllerFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-controller-arn'

@@ -1,0 +1,13 @@
+{
+  "name": "maintenance-service",
+  "version": "1.0.0",
+  "description": "Maintenance service lambda function - Nivel 3",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.1495.0"
+  },
+  "devDependencies": {}
+}
