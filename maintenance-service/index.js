@@ -2,6 +2,28 @@ const AWS = require('aws-sdk');
 const cloudwatch = new AWS.CloudWatch();
 
 /**
+ * Publishes metrics to CloudWatch
+ */
+async function publishMetric(namespace, metricName, value, dimensions) {
+    try {
+        const params = {
+            Namespace: namespace,
+            MetricData: [{
+                MetricName: metricName,
+                Value: value,
+                Unit: metricName === 'ResponseTime' ? 'Milliseconds' : 'Count',
+                Dimensions: dimensions,
+                Timestamp: new Date()
+            }]
+        };
+        
+        await cloudwatch.putMetricData(params).promise();
+    } catch (error) {
+        console.error('Failed to publish metric:', error);
+    }
+}
+
+/**
  * NIVEL 3 - MODO MANTENIMIENTO
  * 
  * Funcionalidad a implementar:
@@ -18,17 +40,27 @@ const cloudwatch = new AWS.CloudWatch();
 
 exports.handler = async (event) => {
     const accountId = event.pathParameters?.accountId || 'default-account';
+    const startTime = Date.now();
     
     try {
         console.log('Nivel 3 - Maintenance Service invoked for account:', accountId);
         
-        // TODO: Simular falla ocasional (10% probabilidad) para determinar mensaje
-        // TODO: Registrar métricas en CloudWatch
+        // Simulate minimal processing time for maintenance mode
+        await new Promise(resolve => setTimeout(resolve, Math.random() * 20 + 10));
         
-        // Determinar si debe responder con éxito o error
-        const shouldFail = Math.random() < 0.1; // 10% probabilidad de fallo
+        // Determine if should respond with success or error (10% failure rate)
+        const shouldFail = Math.random() < 0.1;
         
         if (shouldFail) {
+            // Log error metric to CloudWatch
+            await publishMetric('CircuitBreaker/Service', 'Error', 1, [
+                { Name: 'ServiceLevel', Value: '3' },
+                { Name: 'ServiceType', Value: 'maintenance-service' },
+                { Name: 'ErrorType', Value: 'MaintenanceFailure' }
+            ]);
+            
+            console.log('Nivel 3 - Error metric published to CloudWatch');
+            
             // Respuesta de error según especificación
             return {
                 statusCode: 503,
@@ -51,6 +83,20 @@ exports.handler = async (event) => {
                 })
             };
         } else {
+            // Log success metric to CloudWatch
+            await publishMetric('CircuitBreaker/Service', 'Success', 1, [
+                { Name: 'ServiceLevel', Value: '3' },
+                { Name: 'ServiceType', Value: 'maintenance-service' }
+            ]);
+            
+            // Log response time metric
+            await publishMetric('CircuitBreaker/Service', 'ResponseTime', Date.now() - startTime, [
+                { Name: 'ServiceLevel', Value: '3' },
+                { Name: 'ServiceType', Value: 'maintenance-service' }
+            ]);
+            
+            console.log('Nivel 3 - Success metric published to CloudWatch');
+            
             // Respuesta de éxito según especificación
             return {
                 statusCode: 200,
@@ -82,7 +128,14 @@ exports.handler = async (event) => {
     } catch (error) {
         console.error('Nivel 3 - Error crítico:', error);
         
-        // TODO: Registrar métrica de error crítico en CloudWatch
+        // Log critical error metric to CloudWatch
+        await publishMetric('CircuitBreaker/Service', 'Error', 1, [
+            { Name: 'ServiceLevel', Value: '3' },
+            { Name: 'ServiceType', Value: 'maintenance-service' },
+            { Name: 'ErrorType', Value: 'CriticalError' }
+        ]);
+        
+        console.log('Nivel 3 - Critical error metric published to CloudWatch');
         
         return {
             statusCode: 503,

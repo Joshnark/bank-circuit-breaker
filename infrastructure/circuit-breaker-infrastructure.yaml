@@ -1,0 +1,562 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Circuit Breaker Infrastructure - DynamoDB, SQS, SNS, CloudWatch Alarms, and IAM Resources'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'bank-circuit-breaker'
+    Description: 'Name of the project for resource naming'
+  
+  Environment:
+    Type: String
+    Default: 'dev'
+    AllowedValues: ['dev', 'staging', 'prod']
+    Description: 'Environment name'
+
+Resources:
+  # DynamoDB Table for Circuit Breaker State
+  CircuitBreakerStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-circuit-breaker-state-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment  
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: CircuitBreakerState
+
+  # SQS Queue for CloudWatch Alarms
+  CircuitBreakerAlarmsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${ProjectName}-circuit-breaker-alarms-${Environment}'
+      VisibilityTimeoutSeconds: 300
+      MessageRetentionPeriod: 1209600  # 14 days
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt CircuitBreakerAlarmsDeadLetterQueue.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: CircuitBreakerAlarms
+
+  # Dead Letter Queue for failed alarm processing
+  CircuitBreakerAlarmsDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${ProjectName}-circuit-breaker-alarms-dlq-${Environment}'
+      MessageRetentionPeriod: 1209600  # 14 days
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: CircuitBreakerAlarmsDLQ
+
+  # SQS Queue Policy to allow CloudWatch to send messages
+  CircuitBreakerAlarmsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudWatchAlarmsToSendMessage
+            Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt CircuitBreakerAlarmsQueue.Arn
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref 'AWS::AccountId'
+      Queues:
+        - !Ref CircuitBreakerAlarmsQueue
+
+  # SNS Topic for Circuit Breaker Alerts (monitoring/notifications)
+  CircuitBreakerAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-circuit-breaker-alerts-${Environment}'
+      DisplayName: 'Circuit Breaker Alerts'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: CircuitBreakerAlerts
+
+  # SNS Topic that forwards to SQS
+  CircuitBreakerAlarmsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-circuit-breaker-alarms-topic-${Environment}'
+      DisplayName: 'Circuit Breaker Alarms Topic'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: CircuitBreakerAlarmsForwarding
+
+  # SNS Subscription to forward alarms to SQS
+  CircuitBreakerAlarmsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref CircuitBreakerAlarmsTopic
+      Protocol: sqs
+      Endpoint: !GetAtt CircuitBreakerAlarmsQueue.Arn
+
+  # CloudWatch Alarms for Circuit Breaker System
+
+  # Level 1 to Level 2 Transition Alarm (5+ errors in 5 minutes)
+  Level1ErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-ErrorRate-Level1-${Environment}'
+      AlarmDescription: 'High error rate detected in Level 1 (full-service) - triggers transition to Level 2'
+      MetricName: Error
+      Namespace: CircuitBreaker/Service
+      Statistic: Sum
+      Dimensions:
+        - Name: ServiceLevel
+          Value: '1'
+        - Name: ServiceType
+          Value: full-service
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref CircuitBreakerAlarmsTopic
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: CircuitBreakerFailureDetection
+        - Key: ServiceLevel
+          Value: '1'
+
+  # Level 2 to Level 3 Transition Alarm (10+ total errors)
+  Level2ErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-ErrorRate-Level2-${Environment}'
+      AlarmDescription: 'High total error rate detected - triggers transition to Level 3 (maintenance)'
+      MetricName: Error
+      Namespace: CircuitBreaker/Service
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref CircuitBreakerAlarmsTopic
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: CircuitBreakerFailureDetection
+        - Key: ServiceLevel
+          Value: '2'
+
+  # Level 3 to Level 2 Recovery Alarm (3 consecutive successes)
+  Level3RecoveryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-Recovery-Level3to2-${Environment}'
+      AlarmDescription: 'Recovery detected from Level 3 - triggers transition to Level 2'
+      MetricName: Success
+      Namespace: CircuitBreaker/Service
+      Statistic: Sum
+      Dimensions:
+        - Name: ServiceLevel
+          Value: '3'
+        - Name: ServiceType
+          Value: maintenance-service
+      Period: 300
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 3
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: breaching
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref CircuitBreakerAlarmsTopic
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: CircuitBreakerRecovery
+        - Key: ServiceLevel
+          Value: '3'
+
+  # Level 2 to Level 1 Recovery Alarm (5 consecutive successes)
+  Level2RecoveryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-Recovery-Level2to1-${Environment}'
+      AlarmDescription: 'Recovery detected from Level 2 - triggers transition to Level 1'
+      MetricName: Success
+      Namespace: CircuitBreaker/Service
+      Statistic: Sum
+      Dimensions:
+        - Name: ServiceLevel
+          Value: '2'
+        - Name: ServiceType
+          Value: degraded-service
+      Period: 300
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: breaching
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref CircuitBreakerAlarmsTopic
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: CircuitBreakerRecovery
+        - Key: ServiceLevel
+          Value: '2'
+
+  # Controller Error Monitoring Alarm
+  ControllerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-ControllerErrors-${Environment}'
+      AlarmDescription: 'High error rate in Circuit Breaker Controller'
+      MetricName: Error
+      Namespace: CircuitBreaker/Controller
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref CircuitBreakerAlertsTopic
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: CircuitBreakerMonitoring
+        - Key: Component
+          Value: Controller
+
+  # Alarm Processor Error Monitoring
+  AlarmProcessorErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-AlarmProcessorErrors-${Environment}'
+      AlarmDescription: 'High error rate in Alarm Processor'
+      MetricName: ProcessingErrors
+      Namespace: CircuitBreaker/AlarmProcessor
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref CircuitBreakerAlertsTopic
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: CircuitBreakerMonitoring
+        - Key: Component
+          Value: AlarmProcessor
+
+  # CloudWatch Dashboard
+  CircuitBreakerDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${ProjectName}-CircuitBreakerMonitoring-${Environment}'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "CircuitBreaker/Controller", "CurrentLevel" ],
+                  [ ".", "FailureCount" ],
+                  [ ".", "SuccessCount" ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "Circuit Breaker State",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "CircuitBreaker/Service", "Error", "ServiceLevel", "1" ],
+                  [ "...", "2" ],
+                  [ "...", "3" ],
+                  [ ".", "Success", ".", "1" ],
+                  [ "...", "2" ],
+                  [ "...", "3" ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "Service Success/Error Rates",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "CircuitBreaker/Service", "ResponseTime", "ServiceLevel", "1" ],
+                  [ "...", "2" ],
+                  [ "...", "3" ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "Service Response Times",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "CircuitBreaker/AlarmProcessor", "RecordsProcessed" ],
+                  [ ".", "ProcessingErrors" ],
+                  [ ".", "FailureAlarmProcessed" ],
+                  [ ".", "RecoveryAlarmProcessed" ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "Alarm Processing Activity",
+                "view": "timeSeries"
+              }
+            }
+          ]
+        }
+
+  # IAM Role for Circuit Breaker Lambda Functions
+  CircuitBreakerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-CircuitBreakerLambdaRole-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CircuitBreakerDynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt CircuitBreakerStateTable.Arn
+        - PolicyName: CircuitBreakerCloudWatchAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:GetMetricStatistics
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  # IAM Role for Alarm Processor Lambda
+  AlarmProcessorLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-AlarmProcessorLambdaRole-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AlarmProcessorSQSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt CircuitBreakerAlarmsQueue.Arn
+        - PolicyName: AlarmProcessorDynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt CircuitBreakerStateTable.Arn
+        - PolicyName: AlarmProcessorCloudWatchAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+Outputs:
+  CircuitBreakerStateTableName:
+    Description: 'Name of the DynamoDB table for circuit breaker state'
+    Value: !Ref CircuitBreakerStateTable
+    Export:
+      Name: !Sub '${AWS::StackName}-CircuitBreakerStateTableName'
+
+  CircuitBreakerStateTableArn:
+    Description: 'ARN of the DynamoDB table for circuit breaker state'
+    Value: !GetAtt CircuitBreakerStateTable.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-CircuitBreakerStateTableArn'
+
+  CircuitBreakerAlarmsQueueUrl:
+    Description: 'URL of the SQS queue for circuit breaker alarms'
+    Value: !Ref CircuitBreakerAlarmsQueue
+    Export:
+      Name: !Sub '${AWS::StackName}-CircuitBreakerAlarmsQueueUrl'
+
+  CircuitBreakerAlarmsQueueArn:
+    Description: 'ARN of the SQS queue for circuit breaker alarms'
+    Value: !GetAtt CircuitBreakerAlarmsQueue.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-CircuitBreakerAlarmsQueueArn'
+
+  CircuitBreakerAlarmsTopicArn:
+    Description: 'ARN of the SNS topic for circuit breaker alarms'
+    Value: !Ref CircuitBreakerAlarmsTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-CircuitBreakerAlarmsTopicArn'
+
+  CircuitBreakerAlertsTopicArn:
+    Description: 'ARN of the SNS topic for circuit breaker alerts'
+    Value: !Ref CircuitBreakerAlertsTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-CircuitBreakerAlertsTopicArn'
+
+  CircuitBreakerLambdaRoleArn:
+    Description: 'ARN of the IAM role for circuit breaker Lambda functions'
+    Value: !GetAtt CircuitBreakerLambdaRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-CircuitBreakerLambdaRoleArn'
+
+  AlarmProcessorLambdaRoleArn:
+    Description: 'ARN of the IAM role for alarm processor Lambda function'
+    Value: !GetAtt AlarmProcessorLambdaRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-AlarmProcessorLambdaRoleArn'
+
+  DashboardUrl:
+    Description: 'URL to access the Circuit Breaker CloudWatch Dashboard'
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${ProjectName}-CircuitBreakerMonitoring-${Environment}'

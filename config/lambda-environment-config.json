@@ -1,0 +1,167 @@
+{
+  "environments": {
+    "dev": {
+      "circuit-breaker-controller": {
+        "Variables": {
+          "STATE_TABLE": "bank-circuit-breaker-circuit-breaker-state-dev",
+          "FULL_SERVICE_FUNCTION": "arn:aws:lambda:us-east-1:123456789012:function:bank-circuit-breaker-full-service-dev",
+          "DEGRADED_SERVICE_FUNCTION": "arn:aws:lambda:us-east-1:123456789012:function:bank-circuit-breaker-degraded-service-dev",
+          "MAINTENANCE_SERVICE_FUNCTION": "arn:aws:lambda:us-east-1:123456789012:function:bank-circuit-breaker-maintenance-service-dev",
+          "LOG_LEVEL": "INFO",
+          "DEBUG_MODE": "false"
+        }
+      },
+      "alarm-processor": {
+        "Variables": {
+          "STATE_TABLE": "bank-circuit-breaker-circuit-breaker-state-dev",
+          "LOG_LEVEL": "INFO",
+          "DEBUG_MODE": "false"
+        }
+      },
+      "full-service": {
+        "Variables": {
+          "FAILURE_RATE": "0.05",
+          "LOG_LEVEL": "INFO",
+          "DEBUG_MODE": "false"
+        }
+      },
+      "degraded-service": {
+        "Variables": {
+          "FAILURE_RATE": "0.02",
+          "LOG_LEVEL": "INFO",
+          "DEBUG_MODE": "false"
+        }
+      },
+      "maintenance-service": {
+        "Variables": {
+          "FAILURE_RATE": "0.10",
+          "LOG_LEVEL": "INFO",
+          "DEBUG_MODE": "false"
+        }
+      }
+    },
+    "staging": {
+      "circuit-breaker-controller": {
+        "Variables": {
+          "STATE_TABLE": "bank-circuit-breaker-circuit-breaker-state-staging",
+          "FULL_SERVICE_FUNCTION": "arn:aws:lambda:us-east-1:123456789012:function:bank-circuit-breaker-full-service-staging",
+          "DEGRADED_SERVICE_FUNCTION": "arn:aws:lambda:us-east-1:123456789012:function:bank-circuit-breaker-degraded-service-staging",
+          "MAINTENANCE_SERVICE_FUNCTION": "arn:aws:lambda:us-east-1:123456789012:function:bank-circuit-breaker-maintenance-service-staging",
+          "LOG_LEVEL": "INFO",
+          "DEBUG_MODE": "false"
+        }
+      },
+      "alarm-processor": {
+        "Variables": {
+          "STATE_TABLE": "bank-circuit-breaker-circuit-breaker-state-staging",
+          "LOG_LEVEL": "INFO",
+          "DEBUG_MODE": "false"
+        }
+      },
+      "full-service": {
+        "Variables": {
+          "FAILURE_RATE": "0.02",
+          "LOG_LEVEL": "INFO",
+          "DEBUG_MODE": "false"
+        }
+      },
+      "degraded-service": {
+        "Variables": {
+          "FAILURE_RATE": "0.01",
+          "LOG_LEVEL": "INFO",
+          "DEBUG_MODE": "false"
+        }
+      },
+      "maintenance-service": {
+        "Variables": {
+          "FAILURE_RATE": "0.05",
+          "LOG_LEVEL": "INFO",
+          "DEBUG_MODE": "false"
+        }
+      }
+    },
+    "prod": {
+      "circuit-breaker-controller": {
+        "Variables": {
+          "STATE_TABLE": "bank-circuit-breaker-circuit-breaker-state-prod",
+          "FULL_SERVICE_FUNCTION": "arn:aws:lambda:us-east-1:123456789012:function:bank-circuit-breaker-full-service-prod",
+          "DEGRADED_SERVICE_FUNCTION": "arn:aws:lambda:us-east-1:123456789012:function:bank-circuit-breaker-degraded-service-prod",
+          "MAINTENANCE_SERVICE_FUNCTION": "arn:aws:lambda:us-east-1:123456789012:function:bank-circuit-breaker-maintenance-service-prod",
+          "LOG_LEVEL": "WARN",
+          "DEBUG_MODE": "false"
+        }
+      },
+      "alarm-processor": {
+        "Variables": {
+          "STATE_TABLE": "bank-circuit-breaker-circuit-breaker-state-prod",
+          "LOG_LEVEL": "WARN",
+          "DEBUG_MODE": "false"
+        }
+      },
+      "full-service": {
+        "Variables": {
+          "FAILURE_RATE": "0.001",
+          "LOG_LEVEL": "WARN",
+          "DEBUG_MODE": "false"
+        }
+      },
+      "degraded-service": {
+        "Variables": {
+          "FAILURE_RATE": "0.0005",
+          "LOG_LEVEL": "WARN",
+          "DEBUG_MODE": "false"
+        }
+      },
+      "maintenance-service": {
+        "Variables": {
+          "FAILURE_RATE": "0.002",
+          "LOG_LEVEL": "WARN",
+          "DEBUG_MODE": "false"
+        }
+      }
+    }
+  },
+  "deployment": {
+    "timeouts": {
+      "circuit-breaker-controller": 30,
+      "alarm-processor": 60,
+      "full-service": 30,
+      "degraded-service": 30,
+      "maintenance-service": 30
+    },
+    "memory": {
+      "circuit-breaker-controller": 256,
+      "alarm-processor": 512,
+      "full-service": 256,
+      "degraded-service": 256,
+      "maintenance-service": 128
+    },
+    "runtime": "nodejs18.x",
+    "architectures": ["x86_64"]
+  },
+  "eventSources": {
+    "alarm-processor": {
+      "sqs": {
+        "batchSize": 10,
+        "maximumBatchingWindowInSeconds": 5,
+        "functionResponseTypes": ["ReportBatchItemFailures"]
+      }
+    }
+  },
+  "notes": {
+    "failureRates": {
+      "dev": "Higher failure rates for testing circuit breaker transitions",
+      "staging": "Moderate failure rates for integration testing",
+      "prod": "Very low failure rates, real-world simulation"
+    },
+    "logging": {
+      "dev": "INFO level for detailed debugging",
+      "staging": "INFO level for testing verification", 
+      "prod": "WARN level to reduce costs and noise"
+    },
+    "resources": {
+      "memory": "Allocated based on expected workload per function",
+      "timeout": "Set to handle expected processing time plus buffer"
+    }
+  }
+}

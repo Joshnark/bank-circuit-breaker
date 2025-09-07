@@ -1,0 +1,265 @@
+{
+  "alarms": [
+    {
+      "AlarmName": "CircuitBreaker-ErrorRate-Level1",
+      "AlarmDescription": "High error rate detected in Level 1 (full-service) - triggers transition to Level 2",
+      "MetricName": "Error",
+      "Namespace": "CircuitBreaker/Service",
+      "Statistic": "Sum",
+      "Dimensions": [
+        {
+          "Name": "ServiceLevel",
+          "Value": "1"
+        },
+        {
+          "Name": "ServiceType", 
+          "Value": "full-service"
+        }
+      ],
+      "Period": 300,
+      "EvaluationPeriods": 1,
+      "DatapointsToAlarm": 1,
+      "Threshold": 5,
+      "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+      "TreatMissingData": "notBreaching",
+      "ActionsEnabled": true,
+      "AlarmActions": [
+        "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:circuit-breaker-alarms"
+      ],
+      "Tags": [
+        {
+          "Key": "Purpose",
+          "Value": "CircuitBreakerFailureDetection"
+        },
+        {
+          "Key": "ServiceLevel",
+          "Value": "1"
+        }
+      ]
+    },
+    {
+      "AlarmName": "CircuitBreaker-ErrorRate-Level2", 
+      "AlarmDescription": "High error rate detected across system - triggers transition to Level 3 (maintenance)",
+      "MetricName": "Error",
+      "Namespace": "CircuitBreaker/Service",
+      "Statistic": "Sum",
+      "Period": 300,
+      "EvaluationPeriods": 1, 
+      "DatapointsToAlarm": 1,
+      "Threshold": 10,
+      "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+      "TreatMissingData": "notBreaching",
+      "ActionsEnabled": true,
+      "AlarmActions": [
+        "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:circuit-breaker-alarms"
+      ],
+      "Tags": [
+        {
+          "Key": "Purpose", 
+          "Value": "CircuitBreakerFailureDetection"
+        },
+        {
+          "Key": "ServiceLevel",
+          "Value": "2"
+        }
+      ]
+    },
+    {
+      "AlarmName": "CircuitBreaker-Recovery-Level3to2",
+      "AlarmDescription": "Recovery detected from Level 3 - triggers transition to Level 2",
+      "MetricName": "Success",
+      "Namespace": "CircuitBreaker/Service",
+      "Statistic": "Sum",
+      "Dimensions": [
+        {
+          "Name": "ServiceLevel",
+          "Value": "3"
+        },
+        {
+          "Name": "ServiceType",
+          "Value": "maintenance-service"
+        }
+      ],
+      "Period": 300,
+      "EvaluationPeriods": 3,
+      "DatapointsToAlarm": 3,
+      "Threshold": 1,
+      "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+      "TreatMissingData": "breaching",
+      "ActionsEnabled": true,
+      "AlarmActions": [
+        "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:circuit-breaker-alarms"
+      ],
+      "Tags": [
+        {
+          "Key": "Purpose",
+          "Value": "CircuitBreakerRecovery"
+        },
+        {
+          "Key": "ServiceLevel", 
+          "Value": "3"
+        }
+      ]
+    },
+    {
+      "AlarmName": "CircuitBreaker-Recovery-Level2to1",
+      "AlarmDescription": "Recovery detected from Level 2 - triggers transition to Level 1",
+      "MetricName": "Success", 
+      "Namespace": "CircuitBreaker/Service",
+      "Statistic": "Sum",
+      "Dimensions": [
+        {
+          "Name": "ServiceLevel",
+          "Value": "2"
+        },
+        {
+          "Name": "ServiceType",
+          "Value": "degraded-service"
+        }
+      ],
+      "Period": 300,
+      "EvaluationPeriods": 5,
+      "DatapointsToAlarm": 5,
+      "Threshold": 1,
+      "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+      "TreatMissingData": "breaching",
+      "ActionsEnabled": true,
+      "AlarmActions": [
+        "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:circuit-breaker-alarms"
+      ],
+      "Tags": [
+        {
+          "Key": "Purpose",
+          "Value": "CircuitBreakerRecovery"
+        },
+        {
+          "Key": "ServiceLevel",
+          "Value": "2"
+        }
+      ]
+    },
+    {
+      "AlarmName": "CircuitBreaker-ControllerErrors",
+      "AlarmDescription": "High error rate in Circuit Breaker Controller",
+      "MetricName": "Error",
+      "Namespace": "CircuitBreaker/Controller",
+      "Statistic": "Sum",
+      "Period": 300,
+      "EvaluationPeriods": 1,
+      "DatapointsToAlarm": 1,
+      "Threshold": 3,
+      "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+      "TreatMissingData": "notBreaching",
+      "ActionsEnabled": true,
+      "AlarmActions": [
+        "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:circuit-breaker-alerts"
+      ],
+      "Tags": [
+        {
+          "Key": "Purpose",
+          "Value": "CircuitBreakerMonitoring"
+        },
+        {
+          "Key": "Component",
+          "Value": "Controller"
+        }
+      ]
+    },
+    {
+      "AlarmName": "CircuitBreaker-AlarmProcessorErrors",
+      "AlarmDescription": "High error rate in Alarm Processor",
+      "MetricName": "ProcessingErrors",
+      "Namespace": "CircuitBreaker/AlarmProcessor",
+      "Statistic": "Sum", 
+      "Period": 300,
+      "EvaluationPeriods": 1,
+      "DatapointsToAlarm": 1,
+      "Threshold": 5,
+      "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+      "TreatMissingData": "notBreaching",
+      "ActionsEnabled": true,
+      "AlarmActions": [
+        "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:circuit-breaker-alerts"
+      ],
+      "Tags": [
+        {
+          "Key": "Purpose",
+          "Value": "CircuitBreakerMonitoring"
+        },
+        {
+          "Key": "Component", 
+          "Value": "AlarmProcessor"
+        }
+      ]
+    }
+  ],
+  "dashboards": [
+    {
+      "DashboardName": "CircuitBreakerMonitoring",
+      "DashboardBody": {
+        "widgets": [
+          {
+            "type": "metric",
+            "properties": {
+              "metrics": [
+                ["CircuitBreaker/Controller", "CurrentLevel"],
+                [".", "FailureCount"],
+                [".", "SuccessCount"]
+              ],
+              "period": 300,
+              "stat": "Average",
+              "region": "${AWS::Region}",
+              "title": "Circuit Breaker State"
+            }
+          },
+          {
+            "type": "metric",
+            "properties": {
+              "metrics": [
+                ["CircuitBreaker/Service", "Error", "ServiceLevel", "1"],
+                ["...", "2"],
+                ["...", "3"],
+                [".", "Success", ".", "1"],
+                ["...", "2"], 
+                ["...", "3"]
+              ],
+              "period": 300,
+              "stat": "Sum",
+              "region": "${AWS::Region}",
+              "title": "Service Success/Error Rates"
+            }
+          },
+          {
+            "type": "metric",
+            "properties": {
+              "metrics": [
+                ["CircuitBreaker/Service", "ResponseTime", "ServiceLevel", "1"],
+                ["...", "2"],
+                ["...", "3"]
+              ],
+              "period": 300,
+              "stat": "Average",
+              "region": "${AWS::Region}",
+              "title": "Service Response Times"
+            }
+          },
+          {
+            "type": "metric",
+            "properties": {
+              "metrics": [
+                ["CircuitBreaker/AlarmProcessor", "RecordsProcessed"],
+                [".", "ProcessingErrors"],
+                [".", "FailureAlarmProcessed"],
+                [".", "RecoveryAlarmProcessed"]
+              ],
+              "period": 300,
+              "stat": "Sum",
+              "region": "${AWS::Region}",
+              "title": "Alarm Processing Activity"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

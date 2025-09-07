@@ -2,6 +2,28 @@ const AWS = require('aws-sdk');
 const cloudwatch = new AWS.CloudWatch();
 
 /**
+ * Publishes metrics to CloudWatch
+ */
+async function publishMetric(namespace, metricName, value, dimensions) {
+    try {
+        const params = {
+            Namespace: namespace,
+            MetricData: [{
+                MetricName: metricName,
+                Value: value,
+                Unit: metricName === 'ResponseTime' ? 'Milliseconds' : 'Count',
+                Dimensions: dimensions,
+                Timestamp: new Date()
+            }]
+        };
+        
+        await cloudwatch.putMetricData(params).promise();
+    } catch (error) {
+        console.error('Failed to publish metric:', error);
+    }
+}
+
+/**
  * NIVEL 1 - SERVICIO COMPLETO
  * 
  * Funcionalidad a implementar:
@@ -19,14 +41,36 @@ const cloudwatch = new AWS.CloudWatch();
 
 exports.handler = async (event) => {
     const accountId = event.pathParameters?.accountId || 'default-account';
+    const startTime = Date.now();
     
     try {
         console.log('Nivel 1 - Full Service invoked for account:', accountId);
         
-        // TODO: Simular fallo aleatorio (5% probabilidad) para testing
+        // Simulate random failure (5% probability) for testing
+        const shouldFail = Math.random() < 0.05;
+        if (shouldFail) {
+            throw new Error('Simulated failure for circuit breaker testing');
+        }
+        
+        // Simulate processing time for full service
+        await new Promise(resolve => setTimeout(resolve, Math.random() * 100 + 50));
+        
         // TODO: Consultar balance real de base de datos
         // TODO: Obtener historial COMPLETO de transferencias
-        // TODO: Registrar métrica de éxito en CloudWatch
+        
+        // Log success metric to CloudWatch
+        await publishMetric('CircuitBreaker/Service', 'Success', 1, [
+            { Name: 'ServiceLevel', Value: '1' },
+            { Name: 'ServiceType', Value: 'full-service' }
+        ]);
+        
+        // Log response time metric
+        await publishMetric('CircuitBreaker/Service', 'ResponseTime', Date.now() - startTime, [
+            { Name: 'ServiceLevel', Value: '1' },
+            { Name: 'ServiceType', Value: 'full-service' }
+        ]);
+        
+        console.log('Nivel 1 - Success metric published to CloudWatch');
         
         const response = {
             statusCode: 200,
@@ -63,7 +107,14 @@ exports.handler = async (event) => {
     } catch (error) {
         console.error('Nivel 1 - Error:', error);
         
-        // TODO: Registrar métrica de error en CloudWatch
+        // Log error metric to CloudWatch
+        await publishMetric('CircuitBreaker/Service', 'Error', 1, [
+            { Name: 'ServiceLevel', Value: '1' },
+            { Name: 'ServiceType', Value: 'full-service' },
+            { Name: 'ErrorType', Value: error.message.includes('Simulated') ? 'SimulatedFailure' : 'SystemError' }
+        ]);
+        
+        console.log('Nivel 1 - Error metric published to CloudWatch');
         
         return {
             statusCode: 500,
