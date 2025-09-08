@@ -69,6 +69,7 @@ Resources:
                   - dynamodb:DeleteItem
                   - dynamodb:Query
                   - dynamodb:Scan
+                  - dynamodb:DescribeTable
                 Resource: !GetAtt CircuitBreakerStateTable.Arn
               - Effect: Allow
                 Action:
@@ -94,11 +95,11 @@ Resources:
   FullServiceFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Role: !GetAtt LambdaExecutionRole.Arn
       FunctionName: !Sub '${AWS::StackName}-full-service'
       Runtime: nodejs18.x
       Handler: index.handler
       CodeUri: full-service/
-      # Role: !GetAtt LambdaExecutionRole.Arn  # Let SAM create the role automatically
       Timeout: 30
       MemorySize: 256
       Environment:
@@ -111,11 +112,11 @@ Resources:
   DegradedServiceFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Role: !GetAtt LambdaExecutionRole.Arn
       FunctionName: !Sub '${AWS::StackName}-degraded-service'
       Runtime: nodejs18.x
       Handler: index.handler
       CodeUri: degraded-service/
-      # Role: !GetAtt LambdaExecutionRole.Arn  # Let SAM create the role automatically
       Timeout: 15
       MemorySize: 128
       Environment:
@@ -128,11 +129,11 @@ Resources:
   MaintenanceServiceFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Role: !GetAtt LambdaExecutionRole.Arn
       FunctionName: !Sub '${AWS::StackName}-maintenance-service'
       Runtime: nodejs18.x
       Handler: index.handler
       CodeUri: maintenance-service/
-      # Role: !GetAtt LambdaExecutionRole.Arn  # Let SAM create the role automatically
       Timeout: 10
       MemorySize: 128
       Environment:
@@ -145,11 +146,11 @@ Resources:
   CircuitBreakerControllerFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Role: !GetAtt LambdaExecutionRole.Arn
       FunctionName: !Sub '${AWS::StackName}-circuit-breaker-controller'
       Runtime: nodejs18.x
       Handler: index.handler
       CodeUri: circuit-breaker-controller/
-      # Role: !GetAtt LambdaExecutionRole.Arn  # Let SAM create the role automatically
       Timeout: 60
       MemorySize: 256
       Environment:
@@ -165,11 +166,11 @@ Resources:
   AlarmProcessorFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Role: !GetAtt LambdaExecutionRole.Arn
       FunctionName: !Sub '${AWS::StackName}-alarm-processor'
       Runtime: nodejs18.x
       Handler: index.handler
       CodeUri: alarm-processor/
-      # Role: !GetAtt LambdaExecutionRole.Arn  # Let SAM create the role automatically
       Timeout: 60
       MemorySize: 512
       Environment:
@@ -196,7 +197,41 @@ Resources:
       QueueName: !Sub '${AWS::StackName}-circuit-breaker-alarms-dlq'
       MessageRetentionPeriod: 1209600  # 14 days
 
-  # SQS Event Source Mapping for Alarm Processor
+  # SNS Topic para notificaciones
+  CircuitBreakerTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-circuit-breaker-notifications'
+      DisplayName: 'Circuit Breaker Notifications'
+
+  # Suscripción SNS -> SQS para recibir alarmas en la cola
+  SnsToSqsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref CircuitBreakerTopic
+      Protocol: sqs
+      Endpoint: !GetAtt CircuitBreakerAlarmsQueue.Arn
+      RawMessageDelivery: true
+
+  # Policy de la cola para permitir publicación desde el Topic SNS
+  CircuitBreakerAlarmsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref CircuitBreakerAlarmsQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Allow-SNS-SendMessage
+            Effect: Allow
+            Principal: "*"
+            Action: SQS:SendMessage
+            Resource: !GetAtt CircuitBreakerAlarmsQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref CircuitBreakerTopic
+
+  # SQS Event Source Mapping para Alarm Processor
   AlarmProcessorEventSourceMapping:
     Type: AWS::Lambda::EventSourceMapping
     Properties:
@@ -316,14 +351,14 @@ Resources:
           ResponseModels:
             application/json: Empty
 
-  # Lambda Permissions para API Gateway
+  # Lambda Permissions para API Gateway (fix tipo y patrón de ARN)
   ControllerApiGatewayPermission:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref CircuitBreakerControllerFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${BankingSystemApiGateway}/*/*'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${BankingSystemApiGateway}/*/*/*'
 
   # API Gateway Deployment
   ApiDeployment:
@@ -385,13 +420,6 @@ Resources:
           Value: !Ref FullServiceFunction
       AlarmActions:
         - !Ref CircuitBreakerTopic
-
-  # SNS Topic para notificaciones (opcional)
-  CircuitBreakerTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      TopicName: !Sub '${AWS::StackName}-circuit-breaker-notifications'
-      DisplayName: 'Circuit Breaker Notifications'
 
 Outputs:
   ApiGatewayUrl:
