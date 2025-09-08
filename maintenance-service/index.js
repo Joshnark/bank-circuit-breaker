@@ -39,17 +39,36 @@ async function publishMetric(namespace, metricName, value, dimensions) {
  */
 
 exports.handler = async (event) => {
-    const accountId = event.pathParameters?.accountId || 'default-account';
     const startTime = Date.now();
     
     try {
-        console.log('Nivel 3 - Maintenance Service invoked for account:', accountId);
+        console.log('Nivel 3 - Maintenance Service invoked:', JSON.stringify(event, null, 2));
+        
+        // Parse request body for K6 test payload
+        let requestBody = {};
+        let accountId = 'default-account';
+        let shouldFail = false;
+        
+        if (event.body) {
+            try {
+                requestBody = JSON.parse(event.body);
+                console.log('Parsed request body:', requestBody);
+                
+                // Use error field from K6 payload to determine if we should fail
+                shouldFail = requestBody.error === true;
+                
+                // Extract account ID if provided in path parameters or body
+                accountId = event.pathParameters?.accountId || requestBody.accountId || 'test-account';
+                
+            } catch (parseError) {
+                console.log('Could not parse request body, using defaults:', parseError.message);
+            }
+        }
+        
+        console.log('Level 3 processing request for account:', accountId, 'shouldFail:', shouldFail);
         
         // Simulate minimal processing time for maintenance mode
         await new Promise(resolve => setTimeout(resolve, Math.random() * 20 + 10));
-        
-        // Determine if should respond with success or error (10% failure rate)
-        const shouldFail = Math.random() < 0.1;
         
         if (shouldFail) {
             // Log error metric to CloudWatch
@@ -66,6 +85,8 @@ exports.handler = async (event) => {
                 statusCode: 503,
                 headers: {
                     'Content-Type': 'application/json',
+                    'X-Service-Level': '3',
+                    'X-Service-Type': 'maintenance-service'
                 },
                 body: JSON.stringify({
                     service: 'Nivel 3 - Modo Mantenimiento',
@@ -73,6 +94,12 @@ exports.handler = async (event) => {
                     accountId: accountId,
                     status: 'maintenance_error',
                     message: 'Nivel 3: Sistema bajo mantenimiento, intente más tarde',
+                    testInfo: {
+                        requestedError: requestBody.error,
+                        actualError: true,
+                        requestTimestamp: requestBody.timestamp,
+                        responseTime: Date.now() - startTime
+                    },
                     features: {
                         balanceInquiry: false,
                         transferHistory: false,
@@ -102,6 +129,8 @@ exports.handler = async (event) => {
                 statusCode: 200,
                 headers: {
                     'Content-Type': 'application/json',
+                    'X-Service-Level': '3',
+                    'X-Service-Type': 'maintenance-service'
                 },
                 body: JSON.stringify({
                     service: 'Nivel 3 - Modo Mantenimiento',
@@ -109,6 +138,12 @@ exports.handler = async (event) => {
                     accountId: accountId,
                     status: 'maintenance_minimal',
                     message: 'Nivel 3: Operación al mínimo',
+                    testInfo: {
+                        requestedError: requestBody.error,
+                        actualError: false,
+                        requestTimestamp: requestBody.timestamp,
+                        responseTime: Date.now() - startTime
+                    },
                     data: {
                         balance: null,
                         transfers: null,
@@ -141,13 +176,21 @@ exports.handler = async (event) => {
             statusCode: 503,
             headers: {
                 'Content-Type': 'application/json',
+                'X-Service-Level': '3',
+                'X-Service-Type': 'maintenance-service'
             },
             body: JSON.stringify({
                 service: 'Nivel 3 - Modo Mantenimiento',
                 level: 3,
-                accountId: accountId,
+                accountId: accountId || 'unknown',
                 status: 'critical_error',
                 message: 'Nivel 3: Sistema bajo mantenimiento, intente más tarde',
+                testInfo: {
+                    requestedError: requestBody.error,
+                    actualError: true,
+                    requestTimestamp: requestBody.timestamp,
+                    responseTime: Date.now() - startTime
+                },
                 error: 'Error crítico del sistema',
                 timestamp: new Date().toISOString()
             })

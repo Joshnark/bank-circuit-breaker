@@ -1,4 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
 Description: 'Sistema Bancario Resiliente con Circuit Breaker - 4 Lambda Functions, DynamoDB y CloudWatch'
 
 Parameters:
@@ -15,21 +16,31 @@ Resources:
       TableName: !Sub '${AWS::StackName}-circuit-breaker-state'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: systemId
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
           AttributeType: S
       KeySchema:
-        - AttributeName: systemId
+        - AttributeName: pk
           KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
       SSESpecification:
         SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: alias/aws/dynamodb
 
   # IAM Role para Lambda Functions
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${AWS::StackName}-lambda-execution-role'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -69,16 +80,25 @@ Resources:
                 Action:
                   - lambda:InvokeFunction
                 Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-*'
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:SendMessage
+                Resource: 
+                  - !GetAtt CircuitBreakerAlarmsQueue.Arn
+                  - !GetAtt CircuitBreakerAlarmsDeadLetterQueue.Arn
 
   # Lambda Function 1 - Full Service (Nivel 1)
   FullServiceFunction:
-    Type: AWS::Lambda::Function
+    Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${AWS::StackName}-full-service'
       Runtime: nodejs18.x
       Handler: index.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code: full-service/
+      CodeUri: full-service/
+      # Role: !GetAtt LambdaExecutionRole.Arn  # Let SAM create the role automatically
       Timeout: 30
       MemorySize: 256
       Environment:
@@ -89,13 +109,13 @@ Resources:
 
   # Lambda Function 2 - Degraded Service (Nivel 2)
   DegradedServiceFunction:
-    Type: AWS::Lambda::Function
+    Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${AWS::StackName}-degraded-service'
       Runtime: nodejs18.x
       Handler: index.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code: degraded-service/
+      CodeUri: degraded-service/
+      # Role: !GetAtt LambdaExecutionRole.Arn  # Let SAM create the role automatically
       Timeout: 15
       MemorySize: 128
       Environment:
@@ -106,13 +126,13 @@ Resources:
 
   # Lambda Function 3 - Maintenance Service (Nivel 3)
   MaintenanceServiceFunction:
-    Type: AWS::Lambda::Function
+    Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${AWS::StackName}-maintenance-service'
       Runtime: nodejs18.x
       Handler: index.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code: maintenance-service/
+      CodeUri: maintenance-service/
+      # Role: !GetAtt LambdaExecutionRole.Arn  # Let SAM create the role automatically
       Timeout: 10
       MemorySize: 128
       Environment:
@@ -123,13 +143,13 @@ Resources:
 
   # Lambda Function 4 - Circuit Breaker Controller
   CircuitBreakerControllerFunction:
-    Type: AWS::Lambda::Function
+    Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${AWS::StackName}-circuit-breaker-controller'
       Runtime: nodejs18.x
       Handler: index.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code: circuit-breaker-controller/
+      CodeUri: circuit-breaker-controller/
+      # Role: !GetAtt LambdaExecutionRole.Arn  # Let SAM create the role automatically
       Timeout: 60
       MemorySize: 256
       Environment:
@@ -140,6 +160,52 @@ Resources:
           DEGRADED_SERVICE_FUNCTION: !Ref DegradedServiceFunction
           MAINTENANCE_SERVICE_FUNCTION: !Ref MaintenanceServiceFunction
           LOG_LEVEL: INFO
+
+  # Lambda Function 5 - Alarm Processor
+  AlarmProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-alarm-processor'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      CodeUri: alarm-processor/
+      # Role: !GetAtt LambdaExecutionRole.Arn  # Let SAM create the role automatically
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          STATE_TABLE: !Ref CircuitBreakerStateTable
+          LOG_LEVEL: INFO
+
+  # SQS Queue for CloudWatch alarms
+  CircuitBreakerAlarmsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-circuit-breaker-alarms'
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 1209600  # 14 days
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt CircuitBreakerAlarmsDeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  # Dead Letter Queue for failed alarm processing
+  CircuitBreakerAlarmsDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-circuit-breaker-alarms-dlq'
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  # SQS Event Source Mapping for Alarm Processor
+  AlarmProcessorEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt CircuitBreakerAlarmsQueue.Arn
+      FunctionName: !Ref AlarmProcessorFunction
+      BatchSize: 10
+      MaximumBatchingWindowInSeconds: 5
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
 
   # API Gateway REST API
   BankingSystemApiGateway:
@@ -179,6 +245,13 @@ Resources:
       RestApiId: !Ref BankingSystemApiGateway
       ParentId: !GetAtt BankingSystemApiGateway.RootResourceId
       PathPart: status
+
+  TestResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref BankingSystemApiGateway
+      ParentId: !GetAtt BankingSystemApiGateway.RootResourceId
+      PathPart: test
 
   # API Gateway Methods - Account Endpoint (enruta via Controller)
   AccountMethod:
@@ -220,6 +293,29 @@ Resources:
           ResponseModels:
             application/json: Empty
 
+  # API Gateway Methods - Test Endpoint for K6 (POST request)
+  TestMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref BankingSystemApiGateway
+      ResourceId: !Ref TestResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CircuitBreakerControllerFunction.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: Empty
+        - StatusCode: 503
+          ResponseModels:
+            application/json: Empty
+        - StatusCode: 500
+          ResponseModels:
+            application/json: Empty
+
   # Lambda Permissions para API Gateway
   ControllerApiGatewayPermission:
     Type: AWS::Lambda::Permission
@@ -235,10 +331,10 @@ Resources:
     DependsOn:
       - AccountMethod
       - StatusMethod
+      - TestMethod
     Properties:
       RestApiId: !Ref BankingSystemApiGateway
       StageName: !Ref Environment
-      StageDescription: !Sub 'Deployment for ${Environment} environment'
 
   # CloudWatch Log Groups
   FullServiceLogGroup:
@@ -263,6 +359,12 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/aws/lambda/${CircuitBreakerControllerFunction}'
+      RetentionInDays: 30
+
+  AlarmProcessorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AlarmProcessorFunction}'
       RetentionInDays: 30
 
   # CloudWatch Alarms para monitoreo automático
@@ -309,6 +411,12 @@ Outputs:
     Value: !Sub 'https://${BankingSystemApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/status'
     Export:
       Name: !Sub '${AWS::StackName}-status-endpoint'
+
+  TestEndpoint:
+    Description: 'Endpoint para pruebas K6 del circuit breaker'
+    Value: !Sub 'https://${BankingSystemApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/test'
+    Export:
+      Name: !Sub '${AWS::StackName}-test-endpoint'
 
   DynamoDBTableName:
     Description: 'Nombre de la tabla DynamoDB'

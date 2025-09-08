@@ -40,16 +40,36 @@ async function publishMetric(namespace, metricName, value, dimensions) {
  */
 
 exports.handler = async (event) => {
-    const accountId = event.pathParameters?.accountId || 'default-account';
     const startTime = Date.now();
     
     try {
-        console.log('Nivel 2 - Degraded Service invoked for account:', accountId);
+        console.log('Nivel 2 - Degraded Service invoked:', JSON.stringify(event, null, 2));
         
-        // Simulate less frequent random failure (2% probability)
-        const shouldFail = Math.random() < 0.02;
+        // Parse request body for K6 test payload
+        let requestBody = {};
+        let accountId = 'default-account';
+        let shouldFail = false;
+        
+        if (event.body) {
+            try {
+                requestBody = JSON.parse(event.body);
+                console.log('Parsed request body:', requestBody);
+                
+                // Use error field from K6 payload to determine if we should fail
+                shouldFail = requestBody.error === true;
+                
+                // Extract account ID if provided in path parameters or body
+                accountId = event.pathParameters?.accountId || requestBody.accountId || 'test-account';
+                
+            } catch (parseError) {
+                console.log('Could not parse request body, using defaults:', parseError.message);
+            }
+        }
+        
+        console.log('Level 2 processing request for account:', accountId, 'shouldFail:', shouldFail);
+        
         if (shouldFail) {
-            throw new Error('Simulated failure for circuit breaker testing');
+            throw new Error('Controlled failure triggered by test payload');
         }
         
         // Simulate faster processing time for degraded service
@@ -76,6 +96,8 @@ exports.handler = async (event) => {
             statusCode: 200,
             headers: {
                 'Content-Type': 'application/json',
+                'X-Service-Level': '2',
+                'X-Service-Type': 'degraded-service'
             },
             body: JSON.stringify({
                 service: 'Nivel 2 - Servicio Degradado',
@@ -83,13 +105,24 @@ exports.handler = async (event) => {
                 accountId: accountId,
                 status: 'degraded',
                 message: 'Funcionalidad parcial - Últimas 5 transferencias en caché',
+                testInfo: {
+                    requestedError: requestBody.error,
+                    actualError: false,
+                    requestTimestamp: requestBody.timestamp,
+                    responseTime: Date.now() - startTime
+                },
                 data: {
-                    // TODO: Implementar datos reales
                     balance: {
-                        amount: 0,
+                        amount: 12500.75,
                         currency: 'USD'
                     },
-                    transfers: [], // TODO: Solo últimas 5 desde caché
+                    transfers: [
+                        { id: 1, amount: 500, type: 'credit', date: '2024-01-01' },
+                        { id: 2, amount: 250, type: 'debit', date: '2024-01-02' },
+                        { id: 3, amount: 1000, type: 'credit', date: '2024-01-03' },
+                        { id: 4, amount: 750, type: 'debit', date: '2024-01-04' },
+                        { id: 5, amount: 300, type: 'credit', date: '2024-01-05' }
+                    ],
                     transfersNote: 'Mostrando solo últimas 5 transferencias (datos en caché)',
                     features: {
                         balanceInquiry: true,
@@ -126,6 +159,8 @@ exports.handler = async (event) => {
             statusCode: 503,
             headers: {
                 'Content-Type': 'application/json',
+                'X-Service-Level': '2',
+                'X-Service-Type': 'degraded-service'
             },
             body: JSON.stringify({
                 service: 'Nivel 2 - Servicio Degradado',
@@ -133,6 +168,12 @@ exports.handler = async (event) => {
                 accountId: accountId,
                 status: 'error',
                 message: 'Error en servicio degradado',
+                testInfo: {
+                    requestedError: requestBody.error,
+                    actualError: true,
+                    requestTimestamp: requestBody.timestamp,
+                    responseTime: Date.now() - startTime
+                },
                 error: error.message,
                 timestamp: new Date().toISOString()
             })

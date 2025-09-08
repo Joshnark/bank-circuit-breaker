@@ -40,24 +40,41 @@ async function publishMetric(namespace, metricName, value, dimensions) {
  */
 
 exports.handler = async (event) => {
-    const accountId = event.pathParameters?.accountId || 'default-account';
     const startTime = Date.now();
     
     try {
-        console.log('Nivel 1 - Full Service invoked for account:', accountId);
+        console.log('Nivel 1 - Full Service invoked:', JSON.stringify(event, null, 2));
         
-        // Simulate random failure (5% probability) for testing
-        const shouldFail = Math.random() < 0.05;
+        // Parse request body for K6 test payload
+        let requestBody = {};
+        let accountId = 'default-account';
+        let shouldFail = false;
+        
+        if (event.body) {
+            try {
+                requestBody = JSON.parse(event.body);
+                console.log('Parsed request body:', requestBody);
+                
+                // Use error field from K6 payload to determine if we should fail
+                shouldFail = requestBody.error === true;
+                
+                // Extract account ID if provided in path parameters or body
+                accountId = event.pathParameters?.accountId || requestBody.accountId || 'test-account';
+                
+            } catch (parseError) {
+                console.log('Could not parse request body, using defaults:', parseError.message);
+            }
+        }
+
+        console.log('Level 1 processing request for account:', accountId, 'shouldFail:', shouldFail);
+        
         if (shouldFail) {
-            throw new Error('Simulated failure for circuit breaker testing');
+            throw new Error('Controlled failure triggered by test payload');
         }
         
         // Simulate processing time for full service
         await new Promise(resolve => setTimeout(resolve, Math.random() * 100 + 50));
-        
-        // TODO: Consultar balance real de base de datos
-        // TODO: Obtener historial COMPLETO de transferencias
-        
+
         // Log success metric to CloudWatch
         await publishMetric('CircuitBreaker/Service', 'Success', 1, [
             { Name: 'ServiceLevel', Value: '1' },
@@ -76,6 +93,8 @@ exports.handler = async (event) => {
             statusCode: 200,
             headers: {
                 'Content-Type': 'application/json',
+                'X-Service-Level': '1',
+                'X-Service-Type': 'full-service'
             },
             body: JSON.stringify({
                 service: 'Nivel 1 - Servicio Completo',
@@ -83,13 +102,22 @@ exports.handler = async (event) => {
                 accountId: accountId,
                 status: 'operational',
                 message: 'Funcionalidad completa disponible',
+                testInfo: {
+                    requestedError: requestBody.error,
+                    actualError: false,
+                    requestTimestamp: requestBody.timestamp,
+                    responseTime: Date.now() - startTime
+                },
                 data: {
-                    // TODO: Implementar datos reales
                     balance: {
-                        amount: 0,
+                        amount: 12500.75,
                         currency: 'USD'
                     },
-                    transfers: [], // TODO: Historial completo
+                    transfers: [
+                        { id: 1, amount: 500, type: 'credit', date: '2024-01-01' },
+                        { id: 2, amount: 250, type: 'debit', date: '2024-01-02' },
+                        { id: 3, amount: 1000, type: 'credit', date: '2024-01-03' }
+                    ],
                     features: {
                         balanceInquiry: true,
                         transferHistory: true,
@@ -120,6 +148,8 @@ exports.handler = async (event) => {
             statusCode: 500,
             headers: {
                 'Content-Type': 'application/json',
+                'X-Service-Level': '1',
+                'X-Service-Type': 'full-service'
             },
             body: JSON.stringify({
                 service: 'Nivel 1 - Servicio Completo',
@@ -127,6 +157,12 @@ exports.handler = async (event) => {
                 accountId: accountId,
                 status: 'error',
                 message: 'Error en servicio completo',
+                testInfo: {
+                    requestedError: requestBody.error,
+                    actualError: true,
+                    requestTimestamp: requestBody.timestamp,
+                    responseTime: Date.now() - startTime
+                },
                 error: error.message,
                 timestamp: new Date().toISOString()
             })
