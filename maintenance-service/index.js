@@ -64,9 +64,6 @@ exports.handler = async (event) => {
         
         console.log('Level 3 processing request, shouldFail:', shouldFail);
         
-        // Simulate minimal processing time for maintenance mode
-        await new Promise(resolve => setTimeout(resolve, Math.random() * 20 + 10));
-        
         if (shouldFail) {
             // Log error metric to CloudWatch
             await publishMetric('CircuitBreaker/Service', 'Error', 1, [

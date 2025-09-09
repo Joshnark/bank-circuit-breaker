@@ -206,11 +206,11 @@ async function incrementFailureCount(serviceType, errorType, serviceLevel) {
         let newLevel = currentState.currentLevel;
         let transitionReason = '';
         
-        if (currentState.currentLevel === 1 && updatedState.failureCount >= 5) {
+        if (currentState.currentLevel === 1 && updatedState.failureCount >= 3) {
             newLevel = 2;
             shouldTransition = true;
             transitionReason = `Transition 1→2: ${updatedState.failureCount} failures detected`;
-        } else if (currentState.currentLevel === 2 && updatedState.failureCount >= 10) {
+        } else if (currentState.currentLevel === 2 && updatedState.failureCount >= 8) {
             newLevel = 3;
             shouldTransition = true;
             transitionReason = `Transition 2→3: ${updatedState.failureCount} total failures detected`;

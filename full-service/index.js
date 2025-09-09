@@ -69,8 +69,6 @@ exports.handler = async (event) => {
             throw new Error('Controlled failure triggered by test payload');
         }
         
-        // Simulate processing time for full service
-        await new Promise(resolve => setTimeout(resolve, Math.random() * 100 + 50));
 
         // Log success metric to CloudWatch
         await publishMetric('CircuitBreaker/Service', 'Success', 1, [

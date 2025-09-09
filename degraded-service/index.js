@@ -69,9 +69,6 @@ exports.handler = async (event) => {
             throw new Error('Controlled failure triggered by test payload');
         }
         
-        // Simulate faster processing time for degraded service
-        await new Promise(resolve => setTimeout(resolve, Math.random() * 50 + 20));
-        
         // TODO: Consultar balance de cuenta (operación rápida)
         // TODO: Obtener solo últimas 5 transferencias desde caché
         

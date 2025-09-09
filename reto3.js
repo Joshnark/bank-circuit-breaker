@@ -1,7 +1,7 @@
 import http from 'k6/http';
 import { sleep } from 'k6';
 
-const url = 'https://660cr6c2p8.execute-api.us-east-1.amazonaws.com/dev/test';
+const url = 'https://3qf6pj63m8.execute-api.us-east-1.amazonaws.com/dev/test';
 
 export const options = {
   scenarios: {
