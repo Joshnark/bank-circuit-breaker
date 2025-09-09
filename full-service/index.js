@@ -47,7 +47,6 @@ exports.handler = async (event) => {
         
         // Parse request body for K6 test payload
         let requestBody = {};
-        let accountId = 'default-account';
         let shouldFail = false;
         
         if (event.body) {
@@ -58,15 +57,13 @@ exports.handler = async (event) => {
                 // Use error field from K6 payload to determine if we should fail
                 shouldFail = requestBody.error === true;
                 
-                // Extract account ID if provided in path parameters or body
-                accountId = event.pathParameters?.accountId || requestBody.accountId || 'test-account';
                 
             } catch (parseError) {
                 console.log('Could not parse request body, using defaults:', parseError.message);
             }
         }
 
-        console.log('Level 1 processing request for account:', accountId, 'shouldFail:', shouldFail);
+        console.log('Level 1 processing request, shouldFail:', shouldFail);
         
         if (shouldFail) {
             throw new Error('Controlled failure triggered by test payload');
@@ -97,35 +94,17 @@ exports.handler = async (event) => {
                 'X-Service-Type': 'full-service'
             },
             body: JSON.stringify({
-                service: 'Nivel 1 - Servicio Completo',
                 level: 1,
-                accountId: accountId,
                 status: 'operational',
-                message: 'Funcionalidad completa disponible',
-                testInfo: {
-                    requestedError: requestBody.error,
-                    actualError: false,
-                    requestTimestamp: requestBody.timestamp,
-                    responseTime: Date.now() - startTime
-                },
+                message: 'Full service available',
                 data: {
-                    balance: {
-                        amount: 12500.75,
-                        currency: 'USD'
-                    },
+                    balance: 12500.75,
                     transfers: [
-                        { id: 1, amount: 500, type: 'credit', date: '2024-01-01' },
-                        { id: 2, amount: 250, type: 'debit', date: '2024-01-02' },
-                        { id: 3, amount: 1000, type: 'credit', date: '2024-01-03' }
-                    ],
-                    features: {
-                        balanceInquiry: true,
-                        transferHistory: true,
-                        newTransfers: true,
-                        fullReporting: true
-                    }
-                },
-                timestamp: new Date().toISOString()
+                        { id: 1, amount: 500, type: 'credit' },
+                        { id: 2, amount: 250, type: 'debit' },
+                        { id: 3, amount: 1000, type: 'credit' }
+                    ]
+                }
             })
         };
 
@@ -152,19 +131,9 @@ exports.handler = async (event) => {
                 'X-Service-Type': 'full-service'
             },
             body: JSON.stringify({
-                service: 'Nivel 1 - Servicio Completo',
                 level: 1,
-                accountId: accountId,
                 status: 'error',
-                message: 'Error en servicio completo',
-                testInfo: {
-                    requestedError: requestBody.error,
-                    actualError: true,
-                    requestTimestamp: requestBody.timestamp,
-                    responseTime: Date.now() - startTime
-                },
-                error: error.message,
-                timestamp: new Date().toISOString()
+                message: 'Full service error'
             })
         };
     }

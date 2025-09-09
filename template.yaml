@@ -260,73 +260,12 @@ Resources:
             Resource: '*'
 
   # API Gateway Resources
-  AccountResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref BankingSystemApiGateway
-      ParentId: !GetAtt BankingSystemApiGateway.RootResourceId
-      PathPart: account
-
-  AccountIdResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref BankingSystemApiGateway
-      ParentId: !Ref AccountResource
-      PathPart: '{accountId}'
-
-  StatusResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref BankingSystemApiGateway
-      ParentId: !GetAtt BankingSystemApiGateway.RootResourceId
-      PathPart: status
-
   TestResource:
     Type: AWS::ApiGateway::Resource
     Properties:
       RestApiId: !Ref BankingSystemApiGateway
       ParentId: !GetAtt BankingSystemApiGateway.RootResourceId
       PathPart: test
-
-  # API Gateway Methods - Account Endpoint (enruta via Controller)
-  AccountMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref BankingSystemApiGateway
-      ResourceId: !Ref AccountIdResource
-      HttpMethod: GET
-      AuthorizationType: NONE
-      Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CircuitBreakerControllerFunction.Arn}/invocations'
-      MethodResponses:
-        - StatusCode: 200
-          ResponseModels:
-            application/json: Empty
-        - StatusCode: 503
-          ResponseModels:
-            application/json: Empty
-        - StatusCode: 500
-          ResponseModels:
-            application/json: Empty
-
-  # API Gateway Methods - Status Endpoint (directo al Controller)
-  StatusMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref BankingSystemApiGateway
-      ResourceId: !Ref StatusResource
-      HttpMethod: GET
-      AuthorizationType: NONE
-      Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CircuitBreakerControllerFunction.Arn}/invocations'
-      MethodResponses:
-        - StatusCode: 200
-          ResponseModels:
-            application/json: Empty
 
   # API Gateway Methods - Test Endpoint for K6 (POST request)
   TestMethod:
@@ -364,8 +303,6 @@ Resources:
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
-      - AccountMethod
-      - StatusMethod
       - TestMethod
     Properties:
       RestApiId: !Ref BankingSystemApiGateway
@@ -427,18 +364,6 @@ Outputs:
     Value: !Sub 'https://${BankingSystemApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
     Export:
       Name: !Sub '${AWS::StackName}-api-url'
-
-  AccountEndpoint:
-    Description: 'Endpoint para consultar cuentas'
-    Value: !Sub 'https://${BankingSystemApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/account/{accountId}'
-    Export:
-      Name: !Sub '${AWS::StackName}-account-endpoint'
-
-  StatusEndpoint:
-    Description: 'Endpoint para consultar estado del sistema'
-    Value: !Sub 'https://${BankingSystemApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/status'
-    Export:
-      Name: !Sub '${AWS::StackName}-status-endpoint'
 
   TestEndpoint:
     Description: 'Endpoint para pruebas K6 del circuit breaker'

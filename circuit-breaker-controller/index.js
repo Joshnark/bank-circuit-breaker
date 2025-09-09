@@ -79,27 +79,22 @@ exports.handler = async (event) => {
         const systemState = await dynamoOperations.getSystemState();
         console.log('Current system state:', systemState);
         
-        // Handle GET requests (status checks)
-        if (httpMethod === 'GET') {
-            return await handleStatusRequest(event, systemState, startTime);
-        }
-        
         // Handle POST requests (service routing for K6 tests)
         if (httpMethod === 'POST') {
             return await handleServiceRequest(event, systemState, startTime);
         }
         
-        // Unsupported method
+        // Unsupported method - only POST supported for exercise
         return {
             statusCode: 405,
             headers: {
                 'Content-Type': 'application/json',
-                'Allow': 'GET, POST'
+                'Allow': 'POST'
             },
             body: JSON.stringify({
                 error: 'Method not allowed',
-                message: `HTTP method ${httpMethod} is not supported`,
-                allowedMethods: ['GET', 'POST'],
+                message: `HTTP method ${httpMethod} is not supported - only POST for circuit breaker testing`,
+                allowedMethods: ['POST'],
                 timestamp: new Date().toISOString()
             })
         };
@@ -136,98 +131,6 @@ exports.handler = async (event) => {
     }
 };
 
-/**
- * Handle GET requests - return circuit breaker status
- */
-async function handleStatusRequest(event, systemState, startTime) {
-    // Log controller invocation metric
-    await publishMetric('CircuitBreaker/Controller', 'StatusRequest', 1, [
-        { Name: 'CurrentLevel', Value: systemState.currentLevel.toString() }
-    ]);
-    
-    // Determine which service to route to based on current level
-    const activeServiceEndpoint = getServiceEndpoint(systemState.currentLevel);
-    const serviceTypeMap = {
-        1: 'full-service',
-        2: 'degraded-service', 
-        3: 'maintenance-service'
-    };
-    const activeServiceType = serviceTypeMap[systemState.currentLevel];
-    
-    // Log system state to CloudWatch
-    await publishMetric('CircuitBreaker/Controller', 'CurrentLevel', systemState.currentLevel, []);
-    await publishMetric('CircuitBreaker/Controller', 'FailureCount', systemState.failureCount, []);
-    await publishMetric('CircuitBreaker/Controller', 'SuccessCount', systemState.successCount, []);
-    
-    // Get recent activity for dashboard/monitoring
-    const recentFailures = await dynamoOperations.getRecentFailures(5);
-    const recentSuccesses = await dynamoOperations.getRecentSuccesses(5);
-    
-    // Calculate response time
-    const responseTime = Date.now() - startTime;
-    
-    // Log controller metrics
-    await publishMetric('CircuitBreaker/Controller', 'ResponseTime', responseTime, []);
-    await publishMetric('CircuitBreaker/Controller', 'Success', 1, [
-        { Name: 'CurrentLevel', Value: systemState.currentLevel.toString() }
-    ]);
-    
-    console.log('Circuit Breaker Controller status request completed successfully:', {
-        currentLevel: systemState.currentLevel,
-        activeService: activeServiceType,
-        failureCount: systemState.failureCount,
-        successCount: systemState.successCount,
-        lastTransition: systemState.lastTransition,
-        responseTime: responseTime
-    });
-    
-    // Comprehensive response with system state and routing information
-    return {
-        statusCode: 200,
-        headers: {
-            'Content-Type': 'application/json',
-            'X-Circuit-Breaker-Level': systemState.currentLevel.toString(),
-            'X-Active-Service': activeServiceType
-        },
-        body: JSON.stringify({
-            circuitBreaker: {
-                currentLevel: systemState.currentLevel,
-                activeService: activeServiceType,
-                serviceEndpoint: activeServiceEndpoint,
-                status: systemState.currentLevel === 1 ? 'healthy' : 
-                        systemState.currentLevel === 2 ? 'degraded' : 'maintenance',
-                state: {
-                    failureCount: systemState.failureCount,
-                    successCount: systemState.successCount,
-                    lastTransition: systemState.lastTransition,
-                    transitionReason: systemState.transitionReason,
-                    lastUpdated: systemState.lastUpdated
-                },
-                thresholds: {
-                    level1to2: '5 failures',
-                    level2to3: '10 failures',
-                    level3to2: '3 consecutive successes',
-                    level2to1: '5 consecutive successes'
-                },
-                recentActivity: {
-                    failures: recentFailures.length,
-                    successes: recentSuccesses.length,
-                    timeWindow: '5 minutes'
-                }
-            },
-            routing: {
-                recommendedService: activeServiceType,
-                serviceEndpoint: activeServiceEndpoint,
-                level: systemState.currentLevel
-            },
-            metadata: {
-                timestamp: new Date().toISOString(),
-                responseTime: responseTime,
-                controllerVersion: '1.0.0'
-            }
-        })
-    };
-}
 
 /**
  * Handle POST requests - route to appropriate service based on circuit breaker level

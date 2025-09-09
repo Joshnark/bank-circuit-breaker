@@ -46,7 +46,6 @@ exports.handler = async (event) => {
         
         // Parse request body for K6 test payload
         let requestBody = {};
-        let accountId = 'default-account';
         let shouldFail = false;
         
         if (event.body) {
@@ -57,15 +56,13 @@ exports.handler = async (event) => {
                 // Use error field from K6 payload to determine if we should fail
                 shouldFail = requestBody.error === true;
                 
-                // Extract account ID if provided in path parameters or body
-                accountId = event.pathParameters?.accountId || requestBody.accountId || 'test-account';
                 
             } catch (parseError) {
                 console.log('Could not parse request body, using defaults:', parseError.message);
             }
         }
         
-        console.log('Level 3 processing request for account:', accountId, 'shouldFail:', shouldFail);
+        console.log('Level 3 processing request, shouldFail:', shouldFail);
         
         // Simulate minimal processing time for maintenance mode
         await new Promise(resolve => setTimeout(resolve, Math.random() * 20 + 10));
@@ -89,10 +86,8 @@ exports.handler = async (event) => {
                     'X-Service-Type': 'maintenance-service'
                 },
                 body: JSON.stringify({
-                    service: 'Nivel 3 - Modo Mantenimiento',
-                    level: 3,
-                    accountId: accountId,
-                    status: 'maintenance_error',
+                        level: 3,
+                        status: 'maintenance_error',
                     message: 'Nivel 3: Sistema bajo mantenimiento, intente más tarde',
                     testInfo: {
                         requestedError: requestBody.error,
@@ -100,13 +95,6 @@ exports.handler = async (event) => {
                         requestTimestamp: requestBody.timestamp,
                         responseTime: Date.now() - startTime
                     },
-                    features: {
-                        balanceInquiry: false,
-                        transferHistory: false,
-                        newTransfers: false,
-                        fullReporting: false
-                    },
-                    timestamp: new Date().toISOString()
                 })
             };
         } else {
@@ -133,10 +121,8 @@ exports.handler = async (event) => {
                     'X-Service-Type': 'maintenance-service'
                 },
                 body: JSON.stringify({
-                    service: 'Nivel 3 - Modo Mantenimiento',
-                    level: 3,
-                    accountId: accountId,
-                    status: 'maintenance_minimal',
+                        level: 3,
+                        status: 'maintenance_minimal',
                     message: 'Nivel 3: Operación al mínimo',
                     testInfo: {
                         requestedError: requestBody.error,
@@ -149,13 +135,6 @@ exports.handler = async (event) => {
                         transfers: null,
                         note: 'Solo funcionalidad mínima disponible'
                     },
-                    features: {
-                        balanceInquiry: false,
-                        transferHistory: false,
-                        newTransfers: false,
-                        fullReporting: false
-                    },
-                    timestamp: new Date().toISOString()
                 })
             };
         }
@@ -180,19 +159,10 @@ exports.handler = async (event) => {
                 'X-Service-Type': 'maintenance-service'
             },
             body: JSON.stringify({
-                service: 'Nivel 3 - Modo Mantenimiento',
                 level: 3,
-                accountId: accountId || 'unknown',
                 status: 'critical_error',
                 message: 'Nivel 3: Sistema bajo mantenimiento, intente más tarde',
-                testInfo: {
-                    requestedError: requestBody.error,
-                    actualError: true,
-                    requestTimestamp: requestBody.timestamp,
-                    responseTime: Date.now() - startTime
-                },
                 error: 'Error crítico del sistema',
-                timestamp: new Date().toISOString()
             })
         };
     }

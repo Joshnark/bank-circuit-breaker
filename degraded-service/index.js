@@ -47,7 +47,6 @@ exports.handler = async (event) => {
         
         // Parse request body for K6 test payload
         let requestBody = {};
-        let accountId = 'default-account';
         let shouldFail = false;
         
         if (event.body) {
@@ -58,15 +57,13 @@ exports.handler = async (event) => {
                 // Use error field from K6 payload to determine if we should fail
                 shouldFail = requestBody.error === true;
                 
-                // Extract account ID if provided in path parameters or body
-                accountId = event.pathParameters?.accountId || requestBody.accountId || 'test-account';
                 
             } catch (parseError) {
                 console.log('Could not parse request body, using defaults:', parseError.message);
             }
         }
         
-        console.log('Level 2 processing request for account:', accountId, 'shouldFail:', shouldFail);
+        console.log('Level 2 processing request, shouldFail:', shouldFail);
         
         if (shouldFail) {
             throw new Error('Controlled failure triggered by test payload');
@@ -100,43 +97,24 @@ exports.handler = async (event) => {
                 'X-Service-Type': 'degraded-service'
             },
             body: JSON.stringify({
-                service: 'Nivel 2 - Servicio Degradado',
                 level: 2,
-                accountId: accountId,
                 status: 'degraded',
                 message: 'Funcionalidad parcial - Últimas 5 transferencias en caché',
-                testInfo: {
-                    requestedError: requestBody.error,
-                    actualError: false,
-                    requestTimestamp: requestBody.timestamp,
-                    responseTime: Date.now() - startTime
-                },
                 data: {
-                    balance: {
-                        amount: 12500.75,
-                        currency: 'USD'
-                    },
+                    balance: 12500.75,
                     transfers: [
-                        { id: 1, amount: 500, type: 'credit', date: '2024-01-01' },
-                        { id: 2, amount: 250, type: 'debit', date: '2024-01-02' },
-                        { id: 3, amount: 1000, type: 'credit', date: '2024-01-03' },
-                        { id: 4, amount: 750, type: 'debit', date: '2024-01-04' },
-                        { id: 5, amount: 300, type: 'credit', date: '2024-01-05' }
+                        { id: 1, amount: 500, type: 'credit' },
+                        { id: 2, amount: 250, type: 'debit' },
+                        { id: 3, amount: 1000, type: 'credit' },
+                        { id: 4, amount: 750, type: 'debit' },
+                        { id: 5, amount: 300, type: 'credit' }
                     ],
-                    transfersNote: 'Mostrando solo últimas 5 transferencias (datos en caché)',
-                    features: {
-                        balanceInquiry: true,
-                        transferHistory: true, // Solo limitado
-                        newTransfers: false, // Deshabilitado
-                        fullReporting: false // Deshabilitado
-                    }
                 },
                 limitations: [
                     'Solo últimas 5 transferencias disponibles',
                     'Nuevas transferencias deshabilitadas',
                     'Reportes completos no disponibles'
                 ],
-                timestamp: new Date().toISOString()
             })
         };
 
@@ -163,19 +141,9 @@ exports.handler = async (event) => {
                 'X-Service-Type': 'degraded-service'
             },
             body: JSON.stringify({
-                service: 'Nivel 2 - Servicio Degradado',
                 level: 2,
-                accountId: accountId,
                 status: 'error',
                 message: 'Error en servicio degradado',
-                testInfo: {
-                    requestedError: requestBody.error,
-                    actualError: true,
-                    requestTimestamp: requestBody.timestamp,
-                    responseTime: Date.now() - startTime
-                },
-                error: error.message,
-                timestamp: new Date().toISOString()
             })
         };
     }
