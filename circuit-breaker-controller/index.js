@@ -1,9 +1,14 @@
-const AWS = require('aws-sdk');
-const dynamodb = new AWS.DynamoDB.DocumentClient();
-const cloudwatch = new AWS.CloudWatch();
+const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+const { DynamoDBDocumentClient } = require('@aws-sdk/lib-dynamodb');
+const { CloudWatchClient, PutMetricDataCommand } = require('@aws-sdk/client-cloudwatch');
+const { LambdaClient, InvokeCommand } = require('@aws-sdk/client-lambda');
+
+const dynamoDBClient = new DynamoDBClient({});
+const dynamodb = DynamoDBDocumentClient.from(dynamoDBClient);
+const cloudwatch = new CloudWatchClient({});
 
 // Import DynamoDB operations
-const dynamoOperations = require('../shared/dynamodb-operations');
+const dynamoOperations = require('./dynamodb-operations');
 
 /**
  * Publishes metrics to CloudWatch
@@ -21,7 +26,7 @@ async function publishMetric(namespace, metricName, value, dimensions) {
             }]
         };
         
-        await cloudwatch.putMetricData(params).promise();
+        await cloudwatch.send(new PutMetricDataCommand(params));
     } catch (error) {
         console.error('Failed to publish metric:', error);
     }
@@ -228,7 +233,7 @@ async function handleStatusRequest(event, systemState, startTime) {
  * Handle POST requests - route to appropriate service based on circuit breaker level
  */
 async function handleServiceRequest(event, systemState, startTime) {
-    const lambda = new AWS.Lambda();
+    const lambda = new LambdaClient({});
     
     console.log('Handling service request, current level:', systemState.currentLevel);
     
@@ -265,21 +270,76 @@ async function handleServiceRequest(event, systemState, startTime) {
             Payload: JSON.stringify(serviceEvent)
         };
         
-        const serviceResponse = await lambda.invoke(invokeParams).promise();
+        const serviceResponse = await lambda.send(new InvokeCommand(invokeParams));
+        
+        // Check if Lambda execution failed
+        if (serviceResponse.FunctionError) {
+            console.log(`Lambda execution failed for ${targetServiceType}:`, serviceResponse.FunctionError);
+            
+            // Log the failure in DynamoDB circuit breaker state
+            await dynamoOperations.incrementFailureCount(targetServiceType, 'LambdaExecutionError', systemState.currentLevel);
+            
+            // Log routing error
+            await publishMetric('CircuitBreaker/Controller', 'RoutingError', 1, [
+                { Name: 'TargetService', Value: targetServiceType },
+                { Name: 'CurrentLevel', Value: systemState.currentLevel.toString() },
+                { Name: 'ErrorType', Value: 'LambdaExecutionError' }
+            ]);
+            
+            // Return error response for failed service
+            return {
+                statusCode: 503,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Circuit-Breaker-Level': systemState.currentLevel.toString(),
+                    'X-Circuit-Breaker-Controller': 'true',
+                    'X-Routed-To': targetServiceType
+                },
+                body: JSON.stringify({
+                    service: `Circuit Breaker Controller - ${targetServiceType} failed`,
+                    level: systemState.currentLevel,
+                    status: 'service_failure',
+                    message: 'Service execution failed - circuit breaker failure recorded',
+                    error: 'Lambda function execution error',
+                    targetService: targetServiceType,
+                    timestamp: new Date().toISOString()
+                })
+            };
+        }
         
         // Parse service response
         let parsedResponse;
         if (serviceResponse.Payload) {
-            parsedResponse = JSON.parse(serviceResponse.Payload);
+            // AWS SDK v3 returns Payload as Uint8Array, convert to string first
+            const payloadString = new TextDecoder().decode(serviceResponse.Payload);
+            parsedResponse = JSON.parse(payloadString);
         } else {
             throw new Error('No response payload from service');
         }
         
-        // Log routing success
-        await publishMetric('CircuitBreaker/Controller', 'RoutingSuccess', 1, [
-            { Name: 'TargetService', Value: targetServiceType },
-            { Name: 'CurrentLevel', Value: systemState.currentLevel.toString() }
-        ]);
+        // Check if service returned an error status code
+        if (parsedResponse.statusCode >= 400) {
+            console.log(`Service ${targetServiceType} returned error status:`, parsedResponse.statusCode);
+            
+            // Log the failure in DynamoDB circuit breaker state
+            await dynamoOperations.incrementFailureCount(targetServiceType, 'ServiceError', systemState.currentLevel);
+            
+            // Log routing error
+            await publishMetric('CircuitBreaker/Controller', 'RoutingError', 1, [
+                { Name: 'TargetService', Value: targetServiceType },
+                { Name: 'CurrentLevel', Value: systemState.currentLevel.toString() },
+                { Name: 'ErrorType', Value: 'ServiceError' }
+            ]);
+        } else {
+            // Log success in DynamoDB circuit breaker state
+            await dynamoOperations.incrementSuccessCount(targetServiceType, systemState.currentLevel, Date.now() - startTime);
+            
+            // Log routing success
+            await publishMetric('CircuitBreaker/Controller', 'RoutingSuccess', 1, [
+                { Name: 'TargetService', Value: targetServiceType },
+                { Name: 'CurrentLevel', Value: systemState.currentLevel.toString() }
+            ]);
+        }
         
         console.log(`Successfully routed request to ${targetServiceType}:`, {
             statusCode: parsedResponse.statusCode,

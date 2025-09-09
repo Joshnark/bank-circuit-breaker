@@ -1,5 +1,8 @@
-const AWS = require('aws-sdk');
-const dynamodb = new AWS.DynamoDB.DocumentClient();
+const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+const { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } = require('@aws-sdk/lib-dynamodb');
+
+const dynamoDBClient = new DynamoDBClient({});
+const dynamodb = DynamoDBDocumentClient.from(dynamoDBClient);
 
 const STATE_TABLE = process.env.STATE_TABLE || 'circuit-breaker-state';
 
@@ -20,16 +23,18 @@ async function getSystemState() {
         const params = {
             TableName: STATE_TABLE,
             Key: {
-                pk: 'system-state'
+                pk: 'system-state',
+                sk: 'current'
             }
         };
         
-        const result = await dynamodb.get(params).promise();
+        const result = await dynamodb.send(new GetCommand(params));
         
         if (!result.Item) {
             // Initialize with default state if not exists
             const defaultState = {
                 pk: 'system-state',
+                sk: 'current',
                 currentLevel: 1,
                 failureCount: 0,
                 successCount: 0,
@@ -62,7 +67,7 @@ async function updateSystemState(stateUpdate) {
             }
         };
         
-        await dynamodb.put(params).promise();
+        await dynamodb.send(new PutCommand(params));
         console.log('System state updated:', stateUpdate);
         
         return stateUpdate;
@@ -91,7 +96,7 @@ async function logFailure(serviceType, errorType, serviceLevel) {
             }
         };
         
-        await dynamodb.put(params).promise();
+        await dynamodb.send(new PutCommand(params));
         console.log('Failure logged:', params.Item);
         
     } catch (error) {
@@ -119,7 +124,7 @@ async function logSuccess(serviceType, serviceLevel, responseTime) {
             }
         };
         
-        await dynamodb.put(params).promise();
+        await dynamodb.send(new PutCommand(params));
         console.log('Success logged:', params.Item);
         
     } catch (error) {
@@ -144,7 +149,7 @@ async function getRecentFailures(minutesBack = 5) {
             }
         };
         
-        const result = await dynamodb.query(params).promise();
+        const result = await dynamodb.send(new QueryCommand(params));
         return result.Items || [];
         
     } catch (error) {
@@ -169,7 +174,7 @@ async function getRecentSuccesses(minutesBack = 5) {
             }
         };
         
-        const result = await dynamodb.query(params).promise();
+        const result = await dynamodb.send(new QueryCommand(params));
         return result.Items || [];
         
     } catch (error) {

@@ -1,5 +1,5 @@
-const AWS = require('aws-sdk');
-const cloudwatch = new AWS.CloudWatch();
+const { CloudWatchClient, PutMetricDataCommand } = require('@aws-sdk/client-cloudwatch');
+const cloudwatch = new CloudWatchClient({});
 
 /**
  * Publishes metrics to CloudWatch
@@ -17,7 +17,7 @@ async function publishMetric(namespace, metricName, value, dimensions) {
             }]
         };
         
-        await cloudwatch.putMetricData(params).promise();
+        await cloudwatch.send(new PutMetricDataCommand(params));
     } catch (error) {
         console.error('Failed to publish metric:', error);
     }
